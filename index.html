@@ -331,12 +331,15 @@ var RE = {
   money: /(NT\$|NTD|US\$|USD|\$)\s*[\d,]+|[\d,]+(\.\d+)?\s*(元|萬元|億元|百萬|千萬|萬)/g,
   metric: /(達成率|留存率|次留|活躍用戶|活躍用戶數|日活|月活|DAU|MAU|WAU|新增用戶|註冊數|下載量|安裝量|播放量|觀看時長|完播率|使用時長|開啟率|點擊率|轉換率|轉化率|訂閱數|續訂率|續約率|流失率|退訂率|客單價|ARPU|LTV|CAC|營收|營業額|業績|銷售額|毛利|利潤|成本|費用|市佔率|市占率|滿意度|NPS|CSAT|客訴|抱歉件數|抱怨件數|工單|回覆時間|首次回覆|解決時效|處理時效|稼動|可用度|可用率|妥善率|當機|停機|崩潰率|閃退率|錯誤率|失敗率|成功率|合格率|通過率|覆蓋率|測試覆蓋率|上線頻率|部署頻率|交付週期|前置時間|週期時間|準時率|準交率|準時交付率|缺陷數|瑕疵數|離職率|留任率|出勤率|人均產出|工時|KPI|OKR|分數|名次|排名|評分|星等|評價|績效等第)/g,
   baselineTarget: /(由|從)[^,,。;;]{1,24}?(提升|提高|增加|成長|拉高|降低|減少|下降|縮短|壓低|改善)[^,,。;;]{0,16}?(至|到)/,
+  btPair: /(?:由|從)\s*([^,,。;;]{1,16}?)\s*(?:提升|提高|增加|成長|拉高|降低|減少|下降|縮短|壓低|改善)[^,,。;;]{0,16}?(?:至|到)\s*([^,,。;;]{1,16}?)(?=[,,。;;]|$)/,
+  bareNum: /\d+(?:\.\d+)?/,
   changeTo: /(提升|提高|增加|成長|拉高|降低|減少|下降|縮短|壓低)\s*(至|到)\s*[\d一二三四五六七八九十]/,
 
   /* 具體性 */
   actionVerb: /(完成|建立|建置|導入|開發|改版|重構|設計並|推出|發布|發佈|上線|上架|交付|產出|簽署|簽訂|成交|取得|通過|辦理|舉辦|召開|執行|招募|培訓|訓練|認證|制定|訂定|修訂|彙整|盤點|實施|驗證|串接|整合|整併|移轉|自動化|標準化|數位化|汰換|部署|提交|提報|發表|上線並)/g,
   deliverable: /(系統|平台|App|app|APP|應用程式|網站|頁面|功能|模組|元件|服務|API|api|SDK|後台|前台|報告|月報|週報|周報|報表|簡報|方案|流程|SOP|sop|課程|教材|專案|產品|制度|機制|標準|手冊|計畫書?|儀表板|看板|資料庫|資料倉儲|模型|提案|範本|表單|清單|checklist|藍圖|活動|直播|內容|影片|素材|文件|測試案例|自動化測試|CI\/CD|版本)/g,
   vagueVerb: /(提升|提高|加強|優化|改善|強化|精進|深化|落實|推動|促進|維持|確保)/g,
+  scope: /(全站|全平台|全公司|全部門|全體會員|iOS|Android|App|網頁版|後台|新用戶|新客戶|企業客戶|付費用戶)/g,
   vagueWord: /(盡量|儘量|盡快|儘快|盡力|更好|有效(?!率)|大幅|明顯|相關(?!部門|單位)|若干|適時|適度|積極|妥善|順利|良好|進一步|一定程度|持續(?!性)|全面(?!性)|不斷)/g,
 
   /* 可達成 */
@@ -360,6 +363,18 @@ function matches(text, re){
   return out;
 }
 function clamp(n){ return Math.max(0, Math.min(100, Math.round(n))); }
+
+/* 取「由 A …至 B」兩端的數值。沒有單位的純數字(如指數、評分)也算。 */
+function btValues(text){
+  var m = text.match(RE.btPair);
+  if(!m) return null;
+  function val(part){
+    var v = part.match(RE.percent) || part.match(RE.money) || part.match(RE.numUnit) || part.match(RE.bareNum);
+    return v ? v[0].trim() : null;
+  }
+  var a = val(m[1]), b = val(m[2]);
+  return (a || b) ? { baseline:a, target:b } : null;
+}
 
 /* 移除時間相關片段,避免日期數字被誤判為衡量數字 */
 function stripTime(text){
@@ -385,6 +400,13 @@ function evalS(text){
   if(acts.length){ score += 32; ev.push({label:"行動動詞", items:acts}); }
   if(dels.length){ score += 22; ev.push({label:"具體產出", items:dels}); }
   if(quantified){ score += 20; ev.push({label:"程度明確", items:["以數字界定做到什麼程度"]}); }
+  var mets = matches(text, RE.metric);
+  var scopes = matches(text, RE.scope);
+  if(mets.length && quantified){
+    score += 18;
+    ev.push({label:"衡量對象", items:mets.slice(0,3)});
+  }
+  if(scopes.length){ score += 8; ev.push({label:"適用範圍", items:scopes}); }
   if(text.replace(/\s/g,"").length >= 15) score += 14;
   else tips.push("目標敘述偏短,建議補上「做什麼、範圍、做到什麼程度」三個要素。");
 
@@ -425,7 +447,13 @@ function evalM(text){
     tips.push("已有目標值,建議補上「現況值」形成「由 A 提升/降低至 B」,進步幅度一目了然。");
   }
 
-  if(!pct.length && !units.length && !money.length && !mets.length){
+  var bare = btValues(stripTime(text));
+  if(bare && !pct.length && !units.length && !money.length){
+    score += 26;
+    ev.push({label:"數值(無單位)", items:[(bare.baseline||"?") + " → " + (bare.target||"?")]});
+    tips.push("目標值是沒有單位的數值:請在面談時確認計算口徑與資料來源,避免雙方認知不同。");
+  }
+  if(!pct.length && !units.length && !money.length && !mets.length && !bare){
     if(milestone){
       score += 32;
       ev.push({label:"里程碑型目標", items:["以「完成/上線/取得」驗收"]});
@@ -555,6 +583,17 @@ function methodPhrase(text){
   return m && m[1] ? "導入" + m[1].trim() : null;
 }
 
+/* 一句話裡常出現多個指標詞,取離「由…至…」最近的那個才是被衡量的對象 */
+function nearestMetric(text){
+  var all = [], re = new RegExp(RE.metric.source, "g"), m;
+  while((m = re.exec(text)) !== null) all.push({ text:m[0], index:m.index });
+  if(!all.length) return null;
+  var anchor = text.search(/(?:由|從)\s*[^,,。;;]{0,16}?(?:提升|提高|增加|成長|拉高|降低|減少|下降|縮短|壓低|改善)/);
+  if(anchor === -1) return all[0].text;
+  var before = all.filter(function(x){ return x.index < anchor; });
+  return (before.length ? before[before.length-1] : all[0]).text;
+}
+
 function rewriteParts(text){
   function found(re){ var m = text.match(re); return m ? m[0].trim() : null; }
   var tless = stripTime(text);
@@ -562,17 +601,15 @@ function rewriteParts(text){
   var baseline = null, target = nums.length ? nums[0] : null;
 
   /* 有「由 A 提升至 B」結構時,A 是現況值、B 才是目標值 */
-  var bt = text.match(/(?:由|從)\s*([^,,。;;]{1,16}?)\s*(?:提升|提高|增加|成長|拉高|降低|減少|下降|縮短|壓低|改善)[^,,。;;]{0,16}?(?:至|到)\s*([^,,。;;]{1,16}?)(?=[,,。;;]|$)/);
+  var bt = btValues(text);
   if(bt){
-    var a = bt[1].match(RE.percent) || bt[1].match(RE.money) || bt[1].match(RE.numUnit);
-    var b = bt[2].match(RE.percent) || bt[2].match(RE.money) || bt[2].match(RE.numUnit);
-    if(a) baseline = a[0].trim();
-    if(b) target = b[0].trim();
+    baseline = bt.baseline;
+    if(bt.target) target = bt.target;
   }
   return {
     deadline: spanDeadline(text) || found(RE.duration),
     method:   methodPhrase(text),
-    metric:   found(RE.metric),
+    metric:   nearestMetric(text),
     baseline: baseline,
     target:   target
   };
